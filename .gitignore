@@ -1,0 +1,4 @@
+# Exemplo de .gitignore
+.streamlit/
+__pycache__/
+*.pyc
