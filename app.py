@@ -2,11 +2,10 @@
 Filtro do Saber - Gerador de Vídeos de 5 Segundos com IA.
 
 Esta é uma aplicação Streamlit integrada à API do Replicate usando o modelo
-Luma Dream Machine para gerar vídeos de 5 segundos baseados em prompts de texto.
+Luma Dream Machine para gerar vídeos de 5 segundos de forma altamente robusta.
 """
 
 import os
-import time
 import streamlit as st
 import replicate
 from replicate.exceptions import ReplicateError
@@ -41,10 +40,6 @@ st.markdown("""
         background-color: #E03E3E;
         border: none;
     }
-    .video-title {
-        text-align: center;
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -65,22 +60,22 @@ def get_api_token() -> str:
 def generate_video_ia(prompt: str, aspect_ratio: str = "16:9") -> str:
     """
     Chama a API do Replicate usando o modelo Luma Dream Machine.
-    O modelo luma/dream-machine gera vídeos nativos de exatamente 5 segundos.
+    Utiliza o método .run() para estabilidade de nível de produção.
     """
     token = get_api_token()
     if not token:
         raise ValueError(
             "Chave de API do Replicate não configurada. "
-            "Por favor, configure o REPLICATE_API_TOKEN nos Secrets."
+            "Por favor, configure o REPLICATE_API_TOKEN nos Secrets do Streamlit."
         )
 
-    # Inicializa o cliente do Replicate de forma explícita para evitar falhas de contexto
+    # Inicializa o cliente oficial do Replicate
     client = replicate.Client(api_token=token)
 
-    # Iniciando a predição de forma assíncrona para podermos monitorar o status em tempo real
-    # e oferecer a melhor experiência ao usuário (UX)
-    prediction = client.predictions.create(
-        model="luma/dream-machine",
+    # O método client.run gerencia internamente o polling, fila de espera
+    # e tratamento de erros de forma muito mais segura que um loop while manual
+    output = client.run(
+        "luma/dream-machine",
         input={
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
@@ -88,45 +83,10 @@ def generate_video_ia(prompt: str, aspect_ratio: str = "16:9") -> str:
         }
     )
 
-    # Polling de progresso inteligente com tratamento de timeout (limite de 180 segundos)
-    start_time = time.time()
-    timeout = 180  # 3 minutos
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    while prediction.status not in ["succeeded", "failed", "canceled"]:
-        elapsed_time = time.time() - start_time
-        if elapsed_time > timeout:
-            # Cancela a predição na API do Replicate caso estoure o timeout
-            try:
-                prediction.cancel()
-            except Exception:
-                pass
-            raise TimeoutError("O servidor da API demorou mais que o esperado para gerar o vídeo.")
-
-        # Atualiza a interface com o status real do processamento
-        status = prediction.status
-        if status == "starting":
-            progress_bar.progress(10)
-            status_text.info("⌛ Alocando servidores de IA para o seu vídeo...")
-        elif status == "processing":
-            progress_bar.progress(50)
-            status_text.info(f"🎨 Gerando os quadros do vídeo... (Tempo decorrido: {int(elapsed_time)}s)")
-        
-        time.sleep(4)  # Intervalo seguro para não sobrecarregar requisições à API
-        prediction.reload()
-
-    # Tratamento final com base no resultado do processamento
-    if prediction.status == "succeeded":
-        progress_bar.progress(100)
-        status_text.empty()
-        # O output do luma/dream-machine é uma string URL direta do vídeo gerado
-        return prediction.output
-    elif prediction.status == "failed":
-        raise ReplicateError(f"A geração de vídeo falhou. Erro da API: {prediction.error}")
-    else:
-        raise ReplicateError("A geração foi cancelada inesperadamente.")
+    # O retorno do modelo Luma Dream Machine é tipicamente a URL direta do vídeo
+    if isinstance(output, list):
+        return output[0]
+    return str(output)
 
 # ==========================================
 # INTERFACE PRINCIPAL DO STREAMLIT
@@ -142,17 +102,17 @@ def main():
         "Descreva a cena que você quer criar:",
         placeholder="Ex: Um close-up dramático de uma ampulheta dourada escorrendo areia luminosa azul, estilo macro e cinematográfico.",
         max_chars=350,
-        help="Seja descritivo! Adicione palavras sobre o estilo, iluminação e cores para obter os melhores resultados."
+        help="Seja descritivo! Adicione detalhes de estilo, câmera, iluminação e cores."
     )
 
-    # Configurações avançadas expansíveis (mantendo a interface limpa)
+    # Configurações expansíveis
     with st.expander("⚙️ Configurações do Vídeo"):
-        st.write("⏱️ **Duração do vídeo:** 5 segundos *(Bloqueado pelo sistema do Filtro do Saber)*")
+        st.write("⏱️ **Duração do vídeo:** 5 segundos *(Configuração padrão Filtro do Saber)*")
         aspect_ratio = st.selectbox(
             "Proporção de Tela (Aspect Ratio):",
             options=["16:9", "9:16", "1:1"],
             index=0,
-            help="16:9 é ideal para o YouTube tradicional, enquanto 9:16 é perfeito para Shorts e TikTok."
+            help="16:9 (YouTube), 9:16 (Shorts/Reels) ou 1:1 (Instagram)."
         )
 
     # Botão de ação principal
@@ -162,18 +122,15 @@ def main():
             return
 
         try:
-            # Container de status de carregamento
-            with st.container():
-                st.subheader("Gerando sua criação cinematográfica...")
+            # Exibe uma mensagem de processamento profissional e nativa
+            with st.spinner("🎨 A IA do Luma Dream Machine está gerando seu vídeo de 5 segundos... Isso pode levar de 1 a 2 minutos dependendo da fila da API."):
                 video_url = generate_video_ia(user_prompt, aspect_ratio)
 
             # Exibição de sucesso e renderização do vídeo
             st.success("🎉 Seu vídeo de 5 segundos foi gerado com sucesso!")
-            
-            # Elemento do vídeo na página
             st.video(video_url)
 
-            # Botão de download do arquivo gerado
+            # Botão de download direto do MP4 gerado
             st.download_button(
                 label="📥 Baixar Vídeo MP4",
                 data=video_url,
@@ -183,11 +140,9 @@ def main():
             )
 
         except ValueError as val_err:
-            st.error(f"Configuração Necessária: {val_err}")
-        except TimeoutError as timeout_err:
-            st.error(f"Erro de Tempo Limite: {timeout_err} Tente novamente em alguns instantes.")
+            st.error(f"Configuração Pendente: {val_err}")
         except ReplicateError as rep_err:
-            st.error(f"Erro na Plataforma de IA: {rep_err}")
+            st.error(f"A API do Replicate retornou um erro: {rep_err}")
         except Exception as e:
             st.error(f"Ocorreu um erro inesperado: {e}")
 
